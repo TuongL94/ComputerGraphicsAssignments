@@ -81,6 +81,16 @@ bool testRaySphere(glm::vec3 pv, glm::vec3 ps, glm::vec3 v, float r1, float r2) 
 	return false;
 }
 
+bool visible(Node asteroid, Node camera, float tol) {
+	if (asteroid.get_translation().z < camera.get_translation().z && asteroid.get_translation().z > camera.get_translation().z - tol) {
+		return true;
+	}
+	else {
+		return false;
+	}
+}
+
+
 
 void
 eda221::Assignment5::run()
@@ -100,15 +110,15 @@ eda221::Assignment5::run()
 	if (sphere.vao == 0u)
 		return;
 
-	//Load astriod genometry
-	float radius_astriod = 1.0f;
-	auto const astriod_gem = parametric_shapes::createSphere(100u, 80u, radius_astriod);
+	//Load asteroid genometry
+	float asteroid_radius = 1.0f;
+	auto const asteroid_shape = parametric_shapes::createSphere(100u, 80u, asteroid_radius);
 	if (sphere.vao == 0u)
 		return;
 
 	//Load bullet geometry
-	float radius_bullet = 0.05f;
-	auto const bullet_gem = parametric_shapes::createSphere(40u, 30u, radius_bullet);
+	float bullet_radius = 0.05f;
+	auto const bullet_gem = parametric_shapes::createSphere(40u, 30u, bullet_radius);
 	if (sphere.vao == 0u)
 		return;
 
@@ -116,9 +126,9 @@ eda221::Assignment5::run()
 	FPSCameraf mCamera(bonobo::pi / 4.0f,
 		static_cast<float>(config::resolution_x) / static_cast<float>(config::resolution_y),
 		0.01f, 1000.0f);
-	mCamera.mWorld.SetTranslate(glm::vec3(0.0f, 0.0f, 5.0f));
+	mCamera.mWorld.SetTranslate(glm::vec3(0.0f, 0.0f, 100.0f));
 	mCamera.mMouseSensitivity = 0.003f;
-	mCamera.mMovementSpeed = 0.025;
+	mCamera.mMovementSpeed = 0.005;
 	window->SetCamera(&mCamera);
 
 	// Create the shader programs
@@ -187,12 +197,12 @@ eda221::Assignment5::run()
 		glUniform1f(glGetUniformLocation(program, "shininess"), shininess);
 	};
 
-	auto diffuse_astriod = glm::vec3(0.3f, 0.2f, 0.2f);
-	auto const astriod_uniforms = [&light_position, &camera_position, &ambient, &diffuse_astriod, &specular, &shininess](GLuint program) {
+	auto diffuse_asteroid = glm::vec3(0.3f, 0.2f, 0.2f);
+	auto const asteroid_uniforms = [&light_position, &camera_position, &ambient, &diffuse_asteroid, &specular, &shininess](GLuint program) {
 		glUniform3fv(glGetUniformLocation(program, "light_position"), 1, glm::value_ptr(light_position));
 		glUniform3fv(glGetUniformLocation(program, "CamPos"), 1, glm::value_ptr(camera_position));
 		glUniform3fv(glGetUniformLocation(program, "ka"), 1, glm::value_ptr(ambient));
-		glUniform3fv(glGetUniformLocation(program, "kd"), 1, glm::value_ptr(diffuse_astriod));
+		glUniform3fv(glGetUniformLocation(program, "kd"), 1, glm::value_ptr(diffuse_asteroid));
 		glUniform3fv(glGetUniformLocation(program, "ks"), 1, glm::value_ptr(specular));
 		glUniform1f(glGetUniformLocation(program, "shininess"), shininess);
 	};
@@ -214,6 +224,21 @@ eda221::Assignment5::run()
 
 	auto polygon_mode = polygon_mode_t::fill;
 
+	// A vector containing the asteroids
+	unsigned int nbrofAsteroids = 40; // Number of asteroids
+	auto asteroids = std::vector<Node>(nbrofAsteroids);
+	auto asteroids_alive = std::vector<bool>(nbrofAsteroids);
+	auto asteroid_bump = loadTexture2D("stone47_bump.png");
+	// Loop filling the vector with asteroids
+	for (int i = 0; i < asteroids.size(); i++) {
+		asteroids[i] = Node();
+		asteroids[i].set_geometry(asteroid_shape);
+		//asteroids[i].set_program(fallback_shader, set_uniforms);
+		asteroids[i].set_program(bumpmap_shader, asteroid_uniforms);
+		asteroids[i].add_texture("asteroid_bump", asteroid_bump);
+		asteroids_alive[i] = false;
+	}
+
 	//Create spaceship
 	auto const spaceship_shape = eda221::loadObjects("spaceship.obj");
 	if (spaceship_shape.empty()) {
@@ -225,11 +250,7 @@ eda221::Assignment5::run()
 	spaceship.set_program(shader, spaceship_uniforms);
 	auto spaceship_tex = loadTexture2D("metal-crate.png");
 	spaceship.add_texture("metal", spaceship_tex);
-	spaceship.rotate_x(1.0f);
-	//spaceship.set_program(texcoord_shader, set_uniforms);
-	
-
-	glEnable(GL_DEPTH_TEST);
+	//spaceship.rotate_x(1.0f);	
 
 	auto sphere_node = Node();
 	sphere_node.set_geometry(sphere);
@@ -252,21 +273,35 @@ eda221::Assignment5::run()
 	//auto skybox = loadTextureCubeMap("sunset_sky/posx.png", "sunset_sky/negx.png", "sunset_skynow/posy.png", "sunset_sky/negy.png", "sunset_sky/negz.png", "sunset_sky/posz.png", true);
 	skybox_node.add_texture("skybox", skybox, GL_TEXTURE_CUBE_MAP);
 
-	//Set up astriod
-	auto astriod = Node();
-	astriod.set_geometry(astriod_gem);
-	astriod.set_program(cubemap_shader, set_uniforms);
-	auto astriod_bump = loadTexture2D("stone47_bump.png");
-	astriod.add_texture("astriod_bump", astriod_bump);
+	//Set up bullets
+	int nbrofBullets = 4;
+	auto bullets = std::vector<Node>(nbrofBullets);
+	auto bullets_alive = std::vector<bool>(nbrofBullets);
+	auto bullet_hit = std::vector<bool>(nbrofBullets);
+	for (int k = 0; k < nbrofBullets; k++) {
+		bullets[k].set_geometry(bullet_gem);
+		bullets[k].set_program(fallback_shader, set_uniforms);
+		bullets_alive[k] = false;
+		bullet_hit[k] = false;
+	}
+
+	//glm::vec3 direction = glm::vec3(0.0f);
+	//glm::vec3 startpoint = glm::vec3(0.0f);
+	////bool render_bullet = false;
+
 
 	//Set up bullet
 	auto bullet = Node();
 	bullet.set_geometry(bullet_gem);
+	bullet.set_program(fallback_shader, set_uniforms);
 	glm::vec3 direction = glm::vec3(0.0f);
 	glm::vec3 startpoint = glm::vec3(0.0f);
-	bool render_bullet = false;
+	//bool render_bullet = false;
+	bool bullet_alive = false;
+	bool hit;
 
 
+	glEnable(GL_DEPTH_TEST);
 	// Enable face culling to improve performance:
 	//glEnable(GL_CULL_FACE);
 	//glCullFace(GL_FRONT);
@@ -281,12 +316,21 @@ eda221::Assignment5::run()
 	int i = 0;
 	glm::vec3 const cam = mCamera.mWorld.GetFront();
 	bullet.translate(glm::vec3(0.0, 0.0, 4.0));
-	auto controlPoints = std::vector<glm::vec3>(2);
-	float path_pos = 0.0f;
+	auto controlPoints = std::vector<glm::vec3>(nbrofBullets * 2);
+	auto path_pos = std::vector<float>(nbrofBullets);
+	for (int k = 0; k < nbrofBullets; k++) {
+		path_pos[k] = 0.0f;
+	}
 	float path_velocity = 0.01f;
+	int bullet_counter = 0;
+	auto interpol = std::vector<glm::vec3>(nbrofBullets);
 
+	bool collision = false;
 
-
+	glm::vec3 spaceship_offset = glm::vec3(0.0, -3.0, -10.0);
+	//added speed
+	float dt = 0.0f;
+	int score = 0;
 
 	while (!glfwWindowShouldClose(window->GetGLFW_Window())) {
 		nowTime = GetTimeMilliseconds();
@@ -303,56 +347,94 @@ eda221::Assignment5::run()
 
 		ImGui_ImplGlfwGL3_NewFrame();
 
-		sphere_node.set_program(bumpmap_shader, phong_set_uniforms);
-		skybox_node.set_program(cubemap_shader, set_uniforms);
-		sphere_node.set_translation(glm::vec3(0.0, -2.0, -5.0));
-		astriod.set_program(bumpmap_shader, astriod_uniforms);
-		astriod.set_translation(glm::vec3(0.0, 0.0, -3.0));
+		//sphere_node.set_program(bumpmap_shader, phong_set_uniforms);
+		
+		//sphere_node.set_translation(glm::vec3(0.0, -2.0, -5.0));
+		//asteroid.set_translation(glm::vec3(0.0, 0.0, -3.0));
 		//bullet.set_program(phong_shader, bullet_uniforms);
-		bullet.set_program(fallback_shader, set_uniforms);
 
-		spaceship.set_translation(glm::vec3(0.0, -1.0, -10.0));
+		spaceship.set_translation(spaceship_offset);
+		spaceship.set_scaling(glm::vec3(0.5f));
 
 		/*bool collision = testSphereSphere(sphere_node.get_translation(), sphere_node.get_scaling()[1] * radius_ship,
-		astriod.get_translation(), astriod.get_scaling[1] * radius_astriod);*/
-		bool collision = testSphereSphere(camera_node.get_translation() + sphere_node.get_translation(), 0.2f,
-			astriod.get_translation(), 1.0f);
-		if (collision) {
-			printf("COLLISION!!!  ");
+		asteroid.get_translation(), asteroid.get_scaling[1] * asteroid_radius);*/
+		//Check collision with all asteroids
+		for (int k = 0; k < nbrofAsteroids; k++) {
+			collision = testSphereSphere(camera_node.get_translation() + spaceship.get_translation(), 2.1f * spaceship.get_scaling().x,
+				asteroids[k].get_translation(), asteroid_radius * asteroids[k].get_scaling().x);
+			if (collision && asteroids_alive[k]) {
+				asteroids_alive[k] = false;
+				printf("COLLISION!!!  ");
+				score -= 1;
+			}
 		}
+
+		//Shoot bullets
+		bool shoot_fired = false;
+		for (int k = 0; k < nbrofBullets; k++) {
+			if (i % 10 == 0 && !bullets_alive[k] && !shoot_fired) {
+				controlPoints[bullet_counter] = camera_node.get_translation() + spaceship.get_translation();
+				controlPoints[bullet_counter + 1] = controlPoints[bullet_counter] - (spaceship_offset - glm::vec3(0.0f, 0.0f, spaceship_offset.z)) 
+					+ mCamera.mWorld.GetFront() * 20.0f;
+				bullets_alive[k] = true;
+				shoot_fired = true;
+				bullet_counter += 2;
+			}
+			//if (i % 100 == 0) {
+			//	controlPoints[0] = mCamera.mWorld.GetTranslation() + spaceship.get_translation();
+			//	controlPoints[1] = controlPoints[0] - (spaceship_offset - glm::vec3(0.0f, 0.0f, spaceship_offset.z))
+			//		+ mCamera.mWorld.GetFront() * 20.0f;
+			//	bullets_alive[k] = true;
+			//	//bullet_counter += 2;
+			//}
+			//if (i % 100 == 25) {
+			//	controlPoints[2] = mCamera.mWorld.GetTranslation() + spaceship.get_translation();
+			//	controlPoints[3] = controlPoints[2] - (spaceship_offset - glm::vec3(0.0f, 0.0f, spaceship_offset.z))
+			//		+ mCamera.mWorld.GetFront() * 20.0f;
+			//	bullets_alive[k] = true;
+			//	//bullet_counter += 2;
+			//}
+			if (bullet_counter >= nbrofBullets * 2) {
+				bullet_counter = 0;
+			}
+		}
+		shoot_fired = false;
 
 		//Shoot bullet
 		//if ((int)nowTime % 1000 < 0.01) {
-		if (i % 100 == 0) {
-			//path_velocity = glm::normalize(mCamera.mWorld.GetFront()) * 0.01f;
-			controlPoints[0] = mCamera.mWorld.GetTranslation() + spaceship.get_translation();
-			controlPoints[1] = controlPoints[0] + mCamera.mWorld.GetFront() * 20.0f;			// path_velocity * 10000.0f;
-			render_bullet = true;
-		}
-		i++;
-		////Make the bullet travel
-		////startpoint += direction * 0.01f;
-		//bullet.set_translation(bullet.get_translation() + 0.01f * cam);// direction);
-
-		glm::vec3 interpol;
-		//glm::vec3 interpol_2;
-		int j = floor(path_pos);
-
-		//interpol = interpolation::evalLERP(controlPoints[i], controlPoints[0], path_pos - i);
-		//if (j > 1) {
-		//	interpol = interpolation::evalLERP(controlPoints[j], controlPoints[j + 1], path_pos - i);
+		//if (i % 100 == 0) {
+		//	controlPoints[0] = mCamera.mWorld.GetTranslation() + spaceship.get_translation();
+		//	controlPoints[1] = controlPoints[0] - (spaceship_offset - glm::vec3(0.0f, 0.0f, spaceship_offset.z)) + mCamera.mWorld.GetFront() * 20.0f;
+		//	bullet_alive = true;
 		//}
 
-		interpol = interpolation::evalLERP(controlPoints[0], controlPoints[1], path_pos - j);
+		//glm::vec3 interpol;
+		for (int k = 0; k < nbrofBullets; k++) {
+			if (bullets_alive[k]) {
+				int j = floor(path_pos[k]);
+				if (j >= 1) {
+					bullets_alive[k] = false;
+				}
+				interpol[k] = interpolation::evalLERP(controlPoints[k * 2], controlPoints[k * 2 + 1], path_pos[k] - j);
+				bullets[k].set_translation(interpol[k]);
+				path_pos[k] += path_velocity;
+			}
+		}
 
-		bullet.set_translation(interpol);
-		path_pos += path_velocity;
 
 
 		//Check bullet hit
-		bool hit = testRaySphere(bullet.get_translation(), astriod.get_translation(), direction, radius_astriod, radius_bullet);
-		if (hit) {
-			printf("BOOM!  ");
+		for (int k = 0; k < nbrofAsteroids; k++) {
+			for (int j = 0; j < nbrofBullets; j++) {
+				bullet_hit[j] = testRaySphere(bullets[j].get_translation(), asteroids[k].get_translation(), 
+					direction, asteroid_radius * asteroids[k].get_scaling().x, bullet_radius);
+				if (bullet_hit[j] && bullets_alive[j] && asteroids_alive[k]) {
+					bullets_alive[j] = false;
+					printf("BOOM!  ");
+					asteroids_alive[k] = false;
+					score += 1;
+				}
+			}
 		}
 
 		if (inputHandler->GetKeycodeState(GLFW_KEY_Z) & JUST_PRESSED) {
@@ -370,9 +452,21 @@ eda221::Assignment5::run()
 			break;
 		}
 
-		camera_position = mCamera.mWorld.GetTranslation();
+		//camera_position = mCamera.mWorld.GetTranslation();
+		mCamera.mWorld.Translate(glm::vec3(0.0f, 0.0f, dt));
 		camera_node.set_translation(mCamera.mWorld.GetTranslation());
 		//camera_node.set_rotation(mCamera.mWorld.GetFront());
+		if (i % 100 == 0) {
+			dt += -0.01f;
+		}
+
+
+		for (int k = 0; k < asteroids.size(); k++) {
+			if (!visible(asteroids[k], camera_node, 100.0f) || !asteroids_alive[k]) {
+				asteroids[k].set_translation(glm::vec3(camera_node.get_translation().x + rand() % 50 - 25.0f, camera_node.get_translation().y + rand() % 50 - 25.0f, camera_node.get_translation().z - (rand() % 50 + 50.0f)));
+				asteroids_alive[k] = true;
+			}
+		}
 
 		auto const window_size = window->GetDimensions();
 		glViewport(0, 0, window_size.x, window_size.y);
@@ -382,10 +476,17 @@ eda221::Assignment5::run()
 
 		//sphere_node.render(mCamera.GetWorldToClipMatrix(), sphere_node.get_transform());
 		skybox_node.render(mCamera.GetWorldToClipMatrix(), skybox_node.get_transform());
-		astriod.render(mCamera.GetWorldToClipMatrix(), astriod.get_transform());
-		//if (render_bullet) {
-		bullet.render(mCamera.GetWorldToClipMatrix(), bullet.get_transform());
-		//}
+		for (int k = 0; k < nbrofAsteroids; k++) {
+			if (visible(asteroids[k], camera_node, 200.0f) && asteroids_alive[k]) {
+				asteroids[k].render(mCamera.GetWorldToClipMatrix(), asteroids[k].get_transform());
+			}
+		}
+		for (int k = 0; k < nbrofBullets; k++){
+			if (bullets_alive[k]) {
+				bullets[k].render(mCamera.GetWorldToClipMatrix(), bullets[k].get_transform());
+			}
+		}
+		
 
 		// Traverse the scene graph and render all the nodes
 		auto node_stack = std::stack<Node const*>();
@@ -413,8 +514,6 @@ eda221::Assignment5::run()
 			}
 		} while (!node_stack.empty());
 
-		//circle_ring.render(mCamera.GetWorldToClipMatrix(), circle_ring.get_transform());
-
 
 		glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
@@ -435,12 +534,19 @@ eda221::Assignment5::run()
 		if (opened)
 			ImGui::Text("%.3f ms", ddeltatime);
 		ImGui::End();
+		ImGui::Begin("Score ", &opened, ImVec2(120, 50), -10.0f, 0);
+		if (opened)
+			ImGui::Text("Your score: %d", score);
+		ImGui::End();
 
 		ImGui::Render();
 
 		window->Swap();
 		lastTime = nowTime;
+
+		i++;
 	}
+	printf("Your score: %d ", score);
 
 	glDeleteProgram(texcoord_shader);
 	texcoord_shader = 0u;
